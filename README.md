@@ -4,7 +4,7 @@ This repository contains the code required to reproduce analyses and figures fro
 
 The data files required for these analyses are stored in separate repository here: XXX. In order to reproduce analyses, the data should first be downloaded and unzipped, then the folders should all be added to the same local folder as the code repository. The code is structured to access data based on relative file paths.
 
-Code repository permanent archive: XX
+Code repository permanent archive: [![DOI](https://zenodo.org/badge/827961817.svg)](https://doi.org/10.5281/zenodo.15864802)
 
 Data repository permanent archive: XX
 
