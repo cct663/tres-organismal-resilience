@@ -28,7 +28,7 @@
 # Load packages ----
     # Load packages used in code. These may need to be installed the first time
     
-        pacman::p_load(plyr, rethinking, modeest, here, lubridate, scales, svMisc, suncalc)
+        pacman::p_load(plyr, modeest, here, lubridate, scales, svMisc, suncalc, tidyverse)
 
 # Optional settings ----
     # Modify settings that change how the code runs.
@@ -68,7 +68,7 @@
         temp_lev <- 31
 
 # Settings for sunrise and sunset ----        
-      # This sets up the twilight time data to be used to determine 
+      # This sets up the sunrise and sunset time data to be used to determine 
       # day and night time bouts later on in the code.        
       
       # Set the earliest and latest day of any file (ok to provide a buffer even earlier and later)
@@ -77,8 +77,8 @@
           
       # Set location for sunrise and sunset times 
       # currently using a single location. could be adjusted to allow different locations for different files
-          lat.sun <- 42.503348
-          lon.sun <- -76.453737
+          lat.sun <- 42.503348  # Ithaca between units 1 & 2
+          lon.sun <- -76.453737 # Ithaca between units 1 & 2
           
       # use suncalc package to get sunrise and sunset times for the year
       # be sure to adjust time zone if needed
@@ -98,7 +98,7 @@
 # Data frame setup ----          
       # Make an object that has the names of all files to be processed
       
-          mycsv <- dir(path = here::here("0_input_data"), pattern = ".csv")
+          mycsv <- dir(path = here::here("hobo_csvs"), pattern = ".csv")
       
       # Make the data frame that will hold output from each list
       
@@ -110,14 +110,17 @@
 # Loop to process each raw file ----         
       # Beginning of a big for loop that will process each file in the folder  
       
-          for(p in 1:length(mycsv)){	
+          #for(p in 1:length(mycsv)){	
+          for(p in 392:length(mycsv)){
                 start2 <- Sys.time()
             
             #Read in the first file
-                data <- read.csv(paste(here::here("0_input_data/"), mycsv[p], sep = ""), header = FALSE)
+                data <- read.csv(paste(here::here("hobo_csvs/"), mycsv[p], sep = ""), 
+                                 header = FALSE, skip = 3)
             
             # Change column names
                 colnames(data) <- c("date", "time", "temp")
+                data <- data[, 1:3]
             
             # Add julian date
                 data$JDate <- yday(as.POSIXct(data$date, format = "%m/%d/%y"))
@@ -129,6 +132,9 @@
                 data$minute <- substr(data$time, nchar(data$time) - 4, nchar(data$time) - 3)
                 data$sec <- substr(data$time, nchar(data$time) - 1, nchar(data$time))
                 
+            # get rid of last few rows that sometimes mess up processing
+                data <- data[1:(nrow(data) - 10), ]
+                
             # Make a new time that is seconds after midnight
                 data$time2 <- as.numeric(data$hour) * 60 * 60 +
                   as.numeric(data$minute) * 60 + as.numeric(data$sec)
@@ -137,11 +143,16 @@
             # the plotting and calculations much easier since it combines date and time into
             # a single continuous measure for each year.
                 data$time4 <- data$time2 + data$JDate * 24 * 60 * 60
+                
+            # figure out the time interval between data logging observations
+                time_gap <- data$time4[5] - data$time4[4]
+                span_fix <- nrow(data) / (time_gap / 10)
+                span_fix1 <- nrow(data) * (time_gap / 10)
             
             # Fit a loess smoothed regression. Adjustments to the degree of wiggliness are done above
             # by change the 'SPAN' value. This could be done on the raw values, but the loess
             # smooths out places where temp jumps up or down only briefly.
-                loessM <- loess(temp ~ time4, data = data, span = SPAN/nrow(data))
+                loessM <- loess(temp ~ time4, data = data, span = SPAN/span_fix1)
                 smoothedM <- predict(loessM)
                 
             # This looks at the difference in temperature from time n to time n + 1 and identified
@@ -190,12 +201,12 @@
                 bouts2 <- subset(bouts, bouts$type == "on" & bouts$delta > tol |
                                bouts$type == "off" & bouts$delta < -tol)
             
-            # Reorder the bouts into temporal sequnce based on the start time.
+            # Reorder the bouts into temporal sequence based on the start time.
                 bouts4 <- bouts2[order(bouts2$start),]
             
             # This is a bit tricky. What the loop here does is to extend the identified bouts that have had short bouts
             # removed from the middle of them based on the temperature threshold above. For example, if two long off
-            # bouts were separated by a short on bout that only went up 1 degres, that would result in the on bout
+            # bouts were separated by a short on bout that only went up 1 degrees, that would result in the on bout
             # being deleted, but still two separate off bouts. This extends the first of those off bouts all the way
             # through the deleted on bout AND the subsequent off bout (and this could go on for an indefinite number
             # of bouts). This has the effect of cleaning up areas where temperature is fairly stable for a long time
@@ -209,13 +220,14 @@
                       bouts4$end.new[i] <- bouts4$start[min(which(bouts4$type[i:nrow(bouts4)] != bouts4$type[i])) + i - 1]
                     }
                   }
-            }
+                }
+                
             ## NOTE: if a file ends with a string of on or off bouts in a row this will give an error about
             # 'no non-missing' arguments, but this can be ignored. 
             
             # Now that the first bout is extended when necessary, this deletes duplicate bouts, which are identified
             # based on shared end times. Note, these are really nested rather than fully duplicated bouts, but they
-            # need to bre cleaned out. It is important that the bouts are sorted in temporal order here because only
+            # need to be cleaned out. It is important that the bouts are sorted in temporal order here because only
             # the first one is saved.
                 bouts5 <- subset(bouts4, !duplicated(bouts4$end.new))
                 bouts5 <- subset(bouts5, is.na(bouts5$end.new) == FALSE)
@@ -223,7 +235,8 @@
                 
             # Calculate a new delta temperature value now that the bouts are extended
                 for(i in 1:nrow(bouts5)){
-                  bouts5$delta2[i] <- data$temp[bouts5[i, "end.new"]] - data$temp[bouts5[i, "start"]]
+                  #bouts5$delta2[i] <- data$temp[bouts5[i, "end.new"]] - data$temp[bouts5[i, "start"]]
+                  bouts5$delta2[i] <- smoothedM[bouts5[i, "end.new"]] - smoothedM[bouts5[i, "start"]]
                 }
             
             ## Add on off to data
@@ -253,7 +266,7 @@
             ## change nighttime bouts over certain temperature to on bouts (see above)
                 data.s <- data
                 data <- subset(data, is.na(data$is_night) == FALSE)
-                data[data$temp > temp_lev & data$is_night == 1, 10] <- 1
+                data[data$temp > temp_lev & data$is_night == 1, "on_off"] <- 1
                 
             # Make new list of on off break points based on cleaned up version
             # first for the lower points
@@ -305,9 +318,11 @@
             # that should be excluded and not scored (see filter_HOBO_code.R).
             
             # Set up to print to a pdf. This is VERY wide for large files but needs to be in order to be visible. Zoom in!
-                pdf(here::here("2_plots/initial_diagnostic", paste0(mycsv[p], "trace", ".pdf")), width = nrow(data) / 2000 * 6, height = 5)
+                pdf(here::here("hobo_plots/initial_diagnostic", paste0(mycsv[p], time_gap, "trace", ".pdf")), 
+                    width = (nrow(data) * (time_gap/10)) / 2000 * 6, height = 5)
             # Set up the plot
-                plot(data$time4, data$temp, type = "n", main = mycsv[p], xlab = "Time", ylab = "Temp (C)", xaxt = "n", ylim = c(14, 40))
+                plot(data$time4, data$temp, type = "n", main = mycsv[p], xlab = "Time", ylab = "Temp (C)", xaxt = "n", ylim = c(14, 40),
+                     xlim = c(min(data$time4), max(data$time4)))
             # Add an axis with reasonably spaced labels
                 axis(1, seq(0, 1e9, 10000))
                 axis(3, seq(0, 120 * 24 * 60 * 60 + 3600 * 2000, 3600), labels = rep("", 4881))  # adds tick marks for each hour
@@ -358,7 +373,7 @@
                 
             # Make a plot that shows lines for all on and off bouts
             # Set up the plot
-                pdf(here::here("2_plots/initial_diagnostic", paste0(mycsv[p], "bouts", ".pdf")), width = 10, height = 7)
+                pdf(here::here("hobo_plots/initial_diagnostic", paste0(mycsv[p], time_gap, "bouts", ".pdf")), width = 10, height = 7)
                 par(mfrow = c(1, 2))
             # first on bouts
                 plot(1, 1, type = "n", ylim = c(15, 40), xlim = c(0, 2100), bty = "n", xaxt = "n", yaxt = "n",
@@ -383,7 +398,7 @@
         # Turn off the pdf
             dev.off()
   
-# Summarize ----  
+    # Summarize  
         # Summarize the bout details object with one row per bout
               bout_out <- xbouts2[, c("type", "delta", "start", "end")]
               for(i in 1:nrow(bout_out)){
@@ -404,8 +419,14 @@
               bout_out$unit <- unit
               bout_out$nest <- nest
               bout_out$file <- mycsv[p]
+              
+        ## add year
+            xyear <- sub(".*\\.(\\d{2,4})\\.csv$", "\\1", bout_out$file[1])
+            if(nchar(xyear) == 2){xyear <- paste("20", xyear, sep = "")}
+            bout_out$year <- xyear
         
         ## Join the summary data to sunrise and set to determine if it is at night
+              bout_out$yr_doy <- paste(bout_out$year, bout_out$JDate, sep = "_")
               bout_out <- join(bout_out, sun, "yr_doy")
               bout_out$is_night <- NA
               for(i in 1:nrow(bout_out)){
@@ -429,3 +450,97 @@
         all_bouts$exclude_all <- 0
         all_bouts$exclude_temp <- 0
         saveRDS(all_bouts, file = here::here("processed_data_output/all_bouts.rds"))
+        
+# Exclude sections ----
+    # This will exclude sections that are not usable for any reason. First, we need to 
+    # manually make a file that lists the sections of each hobo record that we want to 
+    # exclude. I've done this by visually inspecting the plots to identify bad sections.
+        
+      # The key here is the exclusion file, which should have the following columns:
+        # 1. file
+        # 2. start - the start time in total seconds of a section to exclude
+        # 3. stop - the stop time in total seconds of a section to exclude
+        # 4. exclude_temp - enter 1 here if only temperature should be excluded but timing ok
+        # 5. exclude_all - enter 1 here if entire section should be excluded
+        # 
+      # The code first constructs a template for an exclusion file from the list of HOBO
+      # files included in the '0_input_data' folder. The file is written as a csv to the 
+      # 1_reference_files folder. After running this first chunk, you should open the exclusion
+      # file and add any sections you want excluded. Multiple line entries for one file are
+      # OK, you will just have to insert a line and copy the file name.
+        
+      ## NOTE: the exclusion is based on the START time of each bout. So when marking the sections
+        # you want to exclude keep in mind that the window should cover the starts of the scored 
+        # bouts you want excluded, but it doesn't matter if they cover the entire bout or the end.
+        
+        ## First construct the blank exclusion file.
+        
+            mycsv <- dir(path = here::here("hobo_csvs"), pattern = ".csv")
+            excludes <- data.frame(file = mycsv,
+                                   start = NA,
+                                   stop = NA,
+                                   exclude_temp = 0,
+                                   exclude_all = 0)
+            write.csv(excludes, here::here("reference_files/exclude_sections.csv"))
+        ## NOTE: in order to avoid overwriting your own annotated exclusion file, you should 
+        # change the name as soon as you start editing to: exclude_sections_modified.csv
+            
+            ## Now open the exclude file and add any sections you want excluded. This all has to be 
+            # done manually based on inspection of the plots created by the main code.
+            
+        ## After completing the file, run the following code. This will do two things:
+        # 1. Read in the exclusion file and add a 1 to all rows that should be excluded. The
+        # rows are not deleted from the object, but are not used in summarizing in the 
+        # next script.
+        
+        # First read in the bouts produced from the main script and the exclude file with times
+        # added.
+            
+            all_bouts <- readRDS(here::here("processed_data_output/all_bouts.rds"))
+            excludes <- read.csv(here::here("reference_files/exclude_sections_modified.csv"))
+            
+        ## Next run a loop that adds the exclusion to the right bouts
+            
+        # Add full time back in to the bouts data to match the exclusion file
+            all_bouts$time_start_full <- all_bouts$JDate * 24 * 60 * 60 + all_bouts$time_start
+            all_bouts$time_end_full <- all_bouts$JDate * 24 * 60 * 60 + all_bouts$time_end
+            
+        # Create a new version of the all bouts data frame that will get updated exclusions
+            all_bouts_ex <- as.data.frame(matrix(nrow = 0, ncol = ncol(all_bouts)))
+            colnames(all_bouts_ex) <- colnames(all_bouts)
+            
+        ## Loop through each line of the exclusion file and check with subsetting to see if any bouts 
+        # fall in the window of exclusions. If so then update the columns to indicate exclusion.
+            for(i in 1:length(mycsv)){
+              sub1 <- subset(all_bouts, all_bouts$file == mycsv[i])
+              sub2 <- subset(excludes, excludes$file == mycsv[i])
+              if(is.na(sub2$start[1]) == FALSE){
+                for(k in 1:nrow(sub2)){
+                  END <- sub2[k, "stop"]
+                  START <- sub2[k, "start"]
+                  ALL <- sub2[k, "exclude_all"]
+                  TEMP <- sub2[k, "exclude_temp"]
+                  if(nrow(sub1[sub1$time_start_full > START & sub1$time_start_full < END, ]) > 0){
+                    sub1[sub1$time_start_full > START & sub1$time_start_full < END, ]$exclude_all <- ALL
+                    sub1[sub1$time_start_full > START & sub1$time_start_full < END, ]$exclude_temp <- TEMP
+                  }
+                }
+                all_bouts_ex <- rbind(all_bouts_ex, sub1)
+              }
+              if(is.na(sub2$start[1]) == TRUE){
+                all_bouts_ex <- rbind(all_bouts_ex, sub1)
+              }
+            }
+            
+        ## Sometimes multiple HOBO files include the same records if they were downloaded more than once. This
+        # should filter out duplicate records.
+            all_bouts_ex$dup_check <- paste(all_bouts_ex$unit, all_bouts_ex$nest, all_bouts_ex$time_start_full, sep = "_")
+            all_bouts_ex <- all_bouts_ex[!duplicated(all_bouts_ex$dup_check), ]
+            
+        # The final bout level data is written to the output files folder and also saved there as an R object
+            write.csv(all_bouts_ex, here::here("processed_data_output/all_bouts_ex.csv"))
+            saveRDS(all_bouts_ex, here::here("processed_data_output/all_bouts_ex.rds"))
+        
+            all_bouts_ex <- readRDS(here::here("processed_data_output/all_bouts_ex.rds"))
+        
+            
