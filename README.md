@@ -6,7 +6,7 @@ The data files required for these analyses are stored in separate repository her
 
 Code repository permanent archive: [![DOI](https://zenodo.org/badge/827961817.svg)](https://doi.org/10.5281/zenodo.15864802)
 
-Data repository permanent archive: XX
+Data repository permanent archive: [![DOI](https://zenodo.org/badge/827961817.svg)](https://doi.org/10.5281/zenodo.15864830)
 
 # Code structure
 
